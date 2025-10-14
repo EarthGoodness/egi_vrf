@@ -10,8 +10,9 @@ from .options_flow import EgiVrfOptionsFlowHandler
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class EgiVrfConfigFlow(config_entries.ConfigFlow, domain=const.DOMAIN):
-    """Handle a config flow for EGI VRF integration."""
+    """Handle a config flow for EGI VRF / Solo integration."""
 
     VERSION = 1
 
@@ -60,10 +61,15 @@ class EgiVrfConfigFlow(config_entries.ConfigFlow, domain=const.DOMAIN):
                 )
             errors["base"] = error
 
+        # Default parity depends on adapter:
+        # - SOLO = None ("N"), per Solo datasheet (9600,8N1)
+        # - VRF  = Even ("E"), per VRF adapter manual (9600,8E1)
+        parity_default = "N" if self._adapter_type == "solo" else const.DEFAULT_PARITY
+
         schema = vol.Schema({
             vol.Required("port", default=const.DEFAULT_PORT): str,
             vol.Optional("baudrate", default=const.DEFAULT_BAUDRATE): int,
-            vol.Optional("parity", default=const.DEFAULT_PARITY): vol.In(["N", "E", "O"]),
+            vol.Optional("parity", default=parity_default): vol.In(["N", "E", "O"]),
             vol.Optional("stopbits", default=const.DEFAULT_STOPBITS): vol.In([1, 2]),
             vol.Optional("bytesize", default=const.DEFAULT_BYTESIZE): vol.In([7, 8]),
             vol.Optional("slave_id", default=const.DEFAULT_SLAVE_ID): int,
@@ -112,6 +118,8 @@ class EgiVrfConfigFlow(config_entries.ConfigFlow, domain=const.DOMAIN):
                 )
                 if not client.connect():
                     return "cannot_connect"
+                # 0-based addressing works for both Solo (IDU power at 0)
+                # and VRF (first IDU 0-0 block starts at 0).
                 result = client.read_holding_registers(0, 1)
                 client.close()
                 if result is None:

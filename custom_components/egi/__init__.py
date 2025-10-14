@@ -10,12 +10,13 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 
 from . import const
 from .coordinator import EgiAdapterCoordinator
-from .modbus_client import get_shared_client, EgiModbusClient
+from .modbus_client import get_shared_client  # ← use the factory for both serial and TCP
 from .adapters import get_adapter
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["climate", "button", "sensor", "select"]
+
 
 async def _async_config_entry_updated(
     hass: HomeAssistant,
@@ -24,6 +25,7 @@ async def _async_config_entry_updated(
     """Reload the config entry when options are updated."""
     _LOGGER.debug("Config entry %s updated, reloading", entry.entry_id)
     await hass.config_entries.async_reload(entry.entry_id)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -56,6 +58,7 @@ async def async_setup_entry(
 
     conn = entry.data.get("connection_type", "serial")
     sid = entry.data.get("slave_id", const.DEFAULT_SLAVE_ID)
+
     if conn == "serial":
         client = get_shared_client(
             connection_type="serial",
@@ -67,10 +70,12 @@ async def async_setup_entry(
             bytesize=entry.data.get("bytesize", const.DEFAULT_BYTESIZE),
         )
     else:
-        client = EgiModbusClient(
+        # ✅ FIX: Use the same shared-client factory for TCP as well
+        client = get_shared_client(
+            connection_type="tcp",
+            slave_id=sid,
             host=entry.data.get("host"),
             port=entry.data.get("port", 502),
-            unit_id=sid,
         )
 
     if not await hass.async_add_executor_job(client.connect):
@@ -104,11 +109,21 @@ async def async_setup_entry(
             _LOGGER.info("Called %s on %s", method, eid)
         else:
             _LOGGER.warning("%s/%s not found", method, eid)
-    hass.services.async_register(const.DOMAIN, "set_system_time", lambda call: _call("write_system_time", call.data.get("entry_id")))
-    hass.services.async_register(const.DOMAIN, "set_brand_code", lambda call: _call("write_brand_code", call.data.get("entry_id"), call.data.get("brand_code")))
-    if not hass.services.has_service(const.DOMAIN, "scan_idus"): 
+
+    hass.services.async_register(
+        const.DOMAIN, "set_system_time",
+        lambda call: _call("write_system_time", call.data.get("entry_id"))
+    )
+    hass.services.async_register(
+        const.DOMAIN, "set_brand_code",
+        lambda call: _call("write_brand_code", call.data.get("entry_id"), call.data.get("brand_code"))
+    )
+    if not hass.services.has_service(const.DOMAIN, "scan_idus"):
         hass.services.async_register(const.DOMAIN, "scan_idus", lambda call: coord.async_request_refresh())
-    hass.services.async_register(const.DOMAIN, "set_log_level", lambda call: _call("set_log_level", call.data.get("entry_id"), call.data.get("level")))
+    hass.services.async_register(
+        const.DOMAIN, "set_log_level",
+        lambda call: _call("set_log_level", call.data.get("entry_id"), call.data.get("level"))
+    )
 
     # Register device
     registry = async_get_device_registry(hass)
@@ -132,20 +147,25 @@ async def async_setup_entry(
     except Exception:
         brand = "Unknown"
     unit = getattr(client, "unit_id", sid)
-    port = entry.data.get("port") if conn == "serial" else f"{entry.data.get('host')}:{entry.data.get('port',502)}"
-    title = f"{adapter.name} - {brand} (ID {unit} / {port})"
+    port_str = (
+        entry.data.get("port")
+        if conn == "serial"
+        else f"{entry.data.get('host')}:{entry.data.get('port', 502)}"
+    )
+    title = f"{adapter.name} - {brand} (ID {unit} / {port_str})"
     hass.config_entries.async_update_entry(entry, title=title)
 
     coord.setup_duration = time.perf_counter() - start
     _LOGGER.debug("Setup completed in %.2f s", coord.setup_duration)
     return True
 
+
 async def async_unload_entry(
     hass: HomeAssistant,
     entry: ConfigEntry
 ) -> bool:
     """Unload a config entry and clean up all resources."""
-    plats = ["sensor", "select"] if entry.data.get("adapter_type")=="none" else PLATFORMS
+    plats = ["sensor", "select"] if entry.data.get("adapter_type") == "none" else PLATFORMS
     ok = await hass.config_entries.async_unload_platforms(entry, plats)
     if not ok:
         return False
@@ -154,15 +174,15 @@ async def async_unload_entry(
     try:
         registry = async_get_device_registry(hass)
         gid = f"gateway_{entry.entry_id}"
-        dev = registry.async_get_device(identifiers={(const.DOMAIN,gid)})
+        dev = registry.async_get_device(identifiers={(const.DOMAIN, gid)})
         if dev:
             registry.async_remove_device(dev.id)
-    except Exception:
+    except Exception:  # pragma: no cover
         pass
     # remove services if none remain
     if not hass.data[const.DOMAIN]:
-        for s in ("set_system_time","set_brand_code","scan_idus","set_log_level"):
-            if hass.services.has_service(const.DOMAIN,s):
-                hass.services.async_remove(const.DOMAIN,s)
+        for s in ("set_system_time", "set_brand_code", "scan_idus", "set_log_level"):
+            if hass.services.has_service(const.DOMAIN, s):
+                hass.services.async_remove(const.DOMAIN, s)
     _LOGGER.debug("Unloaded entry %s", entry.entry_id)
     return True
