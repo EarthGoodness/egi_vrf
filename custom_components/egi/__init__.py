@@ -70,7 +70,6 @@ async def async_setup_entry(
             bytesize=entry.data.get("bytesize", const.DEFAULT_BYTESIZE),
         )
     else:
-        # ✅ FIX: Use the same shared-client factory for TCP as well
         client = get_shared_client(
             connection_type="tcp",
             slave_id=sid,

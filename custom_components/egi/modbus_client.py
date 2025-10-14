@@ -1,4 +1,4 @@
-"""Modbus client wrapper for EGI Adapters with safe shared connection handling.
+# Modbus client wrapper for EGI Adapters with safe shared connection handling.
 
 from __future__ import annotations
 
@@ -17,15 +17,7 @@ _lock_pool: Dict[str, threading.Lock] = {}
 
 
 def get_shared_client(connection_type: str, slave_id: int = 1, **kwargs) -> "EgiModbusClient":
-    """Create or reuse a shared Modbus client based on unique connection key.
-
-    Args:
-        connection_type: "serial" or "tcp"
-        slave_id: Modbus unit/slave/device address
-        **kwargs: serial or tcp parameters:
-          - serial: port, baudrate, parity, stopbits, bytesize, timeout
-          - tcp: host, port, timeout
-    """
+    """Create or reuse a shared Modbus client based on unique connection key."""
     key = _get_client_key(connection_type, **kwargs)
 
     if key not in _client_pool:
@@ -52,7 +44,7 @@ def get_shared_client(connection_type: str, slave_id: int = 1, **kwargs) -> "Egi
         connected = False
         try:
             connected = client.connect()
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             _LOGGER.warning("Modbus client connect() raised for %s: %s", key, exc)
 
         if connected:
@@ -76,47 +68,38 @@ def _get_client_key(connection_type: str, **kwargs) -> str:
         parity = kwargs.get("parity", "E")
         stop = kwargs.get("stopbits", 1)
         byte = kwargs.get("bytesize", 8)
-        # Include serial parameters so a change forces a new client
         return f"serial::{port}|{baud}|{parity}|{stop}|{byte}"
-    # TCP key
-    host = kwargs.get("host", "").strip()
+    host = (kwargs.get("host") or "").strip()
     port = kwargs.get("port", 502)
     return f"tcp::{host}:{port}"
 
 
 class EgiModbusClient:
-    """Wraps a pymodbus client and applies unit/slave/device_id + shared lock.
-
-    NOTE:
-    - `unit_id` attribute is exposed for UI titles, etc.
-    - `connect()` is safe to call repeatedly; it will attempt to (re)connect.
-    """
+    """Thin wrapper around a pymodbus client with shared lock and device addressing."""
 
     def __init__(self, modbus_client: Any, slave_id: int = 1, lock: threading.Lock | None = None) -> None:
         self._client = modbus_client
         self._slave_id = int(slave_id)
         self._lock = lock or threading.Lock()
-        # Convenience attribute used in __init__.py to render the entry title
+        # Exposed for UI titles in __init__.py
         self.unit_id = self._slave_id
 
     # ---- lifecycle ---------------------------------------------------------
 
     def connect(self) -> bool:
-        """Ensure the underlying client is connected."""
         if self._client is None:
             _LOGGER.error("Modbus client is not initialized")
             return False
         try:
             ok = self._client.connect()
-            _LOGGER.debug("Underlying Modbus client connect() → %s", ok)
+            _LOGGER.debug("Underlying Modbus client connect() -> %s", ok)
             return bool(ok)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             _LOGGER.error("Modbus connect() exception: %s", exc)
             return False
 
     def close(self) -> None:
-        """Keep shared clients open; connection pooling handles lifecycle."""
-        _LOGGER.debug("close() skipped — shared client remains open.")
+        _LOGGER.debug("close() skipped - shared client remains open.")
 
     # ---- helpers -----------------------------------------------------------
 
@@ -124,7 +107,7 @@ class EgiModbusClient:
         """Return the correct address kw for the installed PyModbus method."""
         try:
             params = inspect.signature(method).parameters
-        except Exception:  # pragma: no cover
+        except Exception:
             params = {}
 
         if "slave" in params:
@@ -134,13 +117,15 @@ class EgiModbusClient:
         if "device_id" in params:
             return {"device_id": self._slave_id}
 
-        _LOGGER.debug("No addressing kwarg in %s signature; calling without device address.", method)
+        _LOGGER.debug(
+            "No addressing kwarg in %s signature; calling without device address.",
+            getattr(method, "__name__", str(method)),
+        )
         return {}
 
     # ---- Modbus ops --------------------------------------------------------
 
     def read_holding_registers(self, address: int, count: int = 1):
-        """Read holding registers; returns list[int] or None on error."""
         if self._client is None:
             _LOGGER.error("Modbus client is not initialized")
             return None
@@ -149,7 +134,7 @@ class EgiModbusClient:
             try:
                 method = self._client.read_holding_registers
                 result = method(address=address, count=count, **self._addr_kwargs(method))
-                _LOGGER.debug("Read holding registers addr=%s count=%s → %s", address, count, result)
+                _LOGGER.debug("Read holding registers addr=%s count=%s -> %s", address, count, result)
             except Exception as exc:
                 _LOGGER.error("Modbus read_holding_registers exception: %s", exc)
                 return None
@@ -161,7 +146,6 @@ class EgiModbusClient:
             return getattr(result, "registers", None)
 
     def write_register(self, address: int, value: int) -> bool:
-        """Write a single register."""
         if self._client is None:
             _LOGGER.error("Modbus client is not initialized")
             return False
@@ -170,7 +154,7 @@ class EgiModbusClient:
             try:
                 method = self._client.write_register
                 result = method(address=address, value=value, **self._addr_kwargs(method))
-                _LOGGER.debug("Wrote register addr=%s value=%s → %s", address, value, result)
+                _LOGGER.debug("Wrote register addr=%s value=%s -> %s", address, value, result)
             except Exception as exc:
                 _LOGGER.error("Modbus write_register exception: %s", exc)
                 return False
@@ -182,7 +166,6 @@ class EgiModbusClient:
             return True
 
     def write_registers(self, address: int, values: list[int]) -> bool:
-        """Write multiple consecutive registers."""
         if self._client is None:
             _LOGGER.error("Modbus client is not initialized")
             return False
@@ -191,7 +174,7 @@ class EgiModbusClient:
             try:
                 method = self._client.write_registers
                 result = method(address=address, values=values, **self._addr_kwargs(method))
-                _LOGGER.debug("Wrote registers addr=%s values=%s → %s", address, values, result)
+                _LOGGER.debug("Wrote registers addr=%s values=%s -> %s", address, values, result)
             except Exception as exc:
                 _LOGGER.error("Modbus write_registers exception: %s", exc)
                 return False
